@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>تطبيق الدردشة الصوتية</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Tajawal', sans-serif;
+            background-color: #f0f2f5;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        .container {
+            background-color: white;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            padding: 20px;
+            width: 80%;
+            max-width: 500px;
+        }
+        h1 {
+            color: #3b5998;
+            text-align: center;
+        }
+        input, button {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        button {
+            background-color: #3b5998;
+            color: white;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #2d4373;
+        }
+        #rooms {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-around;
+        }
+        .room {
+            background-color: #f7f7f7;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 10px;
+            margin: 10px;
+            width: calc(50% - 20px);
+            text-align: center;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        .room:hover {
+            background-color: #e9ebee;
+        }
+        #seats {
+            display: flex;
+            justify-content: space-around;
+            margin-top: 20px;
+        }
+        .seat {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background-color: #ddd;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        .seat.occupied {
+            background-color: #3b5998;
+            color: white;
+        }
+        #chat {
+            height: 200px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 10px;
+            margin-top: 20px;
+        }
+        .profile-pic {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            object-fit: cover;
+            margin-right: 10px;
+        }
+        #room {
+            background-size: cover;
+            background-position: center;
+            padding: 20px;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div id="login">
+            <h1><i class="fas fa-comments"></i> تطبيق الدردشة الصوتية</h1>
+            <input type="text" id="username" placeholder="اسم المستخدم">
+            <input type="file" id="profilePic" accept="image/*">
+            <button onclick="register()"><i class="fas fa-user-plus"></i> تسجيل</button>
+        </div>
+        <div id="lobby" style="display: none;">
+            <h1><i class="fas fa-door-open"></i> الغرف المتاحة</h1>
+            <button onclick="showCreateRoomModal()"><i class="fas fa-plus-circle"></i> إنشاء غرفة جديدة</button>
+            <div id="rooms"></div>
+        </div>
+        <div id="createRoomModal" style="display: none;">
+            <h2>إنشاء غرفة جديدة</h2>
+            <input type="text" id="roomName" placeholder="اسم الغرفة">
+            <input type="file" id="roomBackground" accept="image/*">
+            <button onclick="createRoom()">إنشاء الغرفة</button>
+            <button onclick="hideCreateRoomModal()">إلغاء</button>
+        </div>
+        <div id="room" style="display: none;">
+            <h1><i class="fas fa-users"></i> <span id="roomTitle"></span></h1>
+            <div id="seats"></div>
+            <div id="chat"></div>
+            <input type="text" id="message" placeholder="اكتب رسالة">
+            <button onclick="sendMessage()"><i class="fas fa-paper-plane"></i> إرسال</button>
+            <button onclick="leaveSeat()"><i class="fas fa-sign-out-alt"></i> مغادرة المقعد</button>
+            <button onclick="leaveRoom()"><i class="fas fa-door-open"></i> مغادرة الغرفة</button>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let currentUser;
+        let currentRoom;
+        let audioStream;
+
+        function register() {
+            const username = document.getElementById('username').value;
+            const profilePic = document.getElementById('profilePic').files[0];
+            
+            if (profilePic) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    socket.emit('register', { username, profilePic: e.target.result });
+                }
+                reader.readAsDataURL(profilePic);
+            } else {
+                socket.emit('register', { username, profilePic: null });
+            }
+        }
+
+        socket.on('registered', (user) => {
+            currentUser = user;
+            document.getElementById('login').style.display = 'none';
+            document.getElementById('lobby').style.display = 'block';
+            updateRooms();
+        });
+
+        function showCreateRoomModal() {
+            document.getElementById('createRoomModal').style.display = 'block';
+        }
+
+        function hideCreateRoomModal() {
+            document.getElementById('createRoomModal').style.display = 'none';
+        }
+
+        function createRoom() {
+            const roomName = document.getElementById('roomName').value;
+            const roomBackground = document.getElementById('roomBackground').files[0];
+            
+            if (roomBackground) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    socket.emit('createRoom', { name: roomName, background: e.target.result });
+                }
+                reader.readAsDataURL(roomBackground);
+            } else {
+                socket.emit('createRoom', { name: roomName, background: null });
+            }
+            hideCreateRoomModal();
+        }
+
+        socket.on('roomCreated', (roomId) => {
+            updateRooms();
+        });
+
+        function updateRooms() {
+            socket.emit('getRooms');
+        }
+
+        socket.on('roomsList', (rooms) => {
+            const roomsDiv = document.getElementById('rooms');
+            roomsDiv.innerHTML = '';
+            rooms.forEach(room => {
+                const roomElement = document.createElement('div');
+                roomElement.className = 'room';
+                roomElement.innerHTML = `<i class="fas fa-door-open"></i> ${room.name}`;
+                roomElement.onclick = () => joinRoom(room.id);
+                roomsDiv.appendChild(roomElement);
+            });
+        });
+
+        function joinRoom(roomId) {
+            socket.emit('joinRoom', roomId);
+            currentRoom = roomId;
+        }
+
+        socket.on('roomJoined', ({ roomId, roomName, users, seats, background }) => {
+            document.getElementById('lobby').style.display = 'none';
+            document.getElementById('room').style.display = 'block';
+            document.getElementById('roomTitle').textContent = roomName;
+            if (background) {
+                document.getElementById('room').style.backgroundImage = `url(${background})`;
+            }
+            updateSeats(seats);
+        });
+
+        function updateSeats(seats) {
+            const seatsDiv = document.getElementById('seats');
+            seatsDiv.innerHTML = '';
+            seats.forEach((userId, index) => {
+                const seatButton = document.createElement('div');
+                seatButton.className = `seat ${userId ? 'occupied' : ''}`;
+                seatButton.innerHTML = userId ? `<i class="fas fa-user"></i>` : `<i class="fas fa-chair"></i>`;
+                seatButton.onclick = () => takeSeat(index);
+                seatsDiv.appendChild(seatButton);
+            });
+        }
+
+        function takeSeat(index) {
+            socket.emit('takeSeat', index);
+        }
+
+        socket.on('seatTaken', ({ seatIndex, userId }) => {
+            const seats = document.getElementById('seats').children;
+            seats[seatIndex].className = 'seat occupied';
+            seats[seatIndex].innerHTML = `<i class="fas fa-user"></i>`;
+            
+            if (userId === socket.id) {
+                startAudio();
+            }
+        });
+
+        async function startAudio() {
+            try {
+                audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                const audioContext = new AudioContext();
+                const source = audioContext.createMediaStreamSource(audioStream);
+                const destination = audioContext.createMediaStreamDestination();
+                source.connect(destination);
+                
+                // Here you would typically set up WebRTC to send this audio to other users
+                console.log('Audio started');
+            } catch (error) {
+                console.error('Error accessing microphone:', error);
+            }
+        }
+
+        function leaveSeat() {
+            socket.emit('leaveSeat');
+            if (audioStream) {
+                audioStream.getTracks().forEach(track => track.stop());
+                audioStream = null;
+            }
+        }
+
+        socket.on('seatLeft', ({ seatIndex, userId }) => {
+            const seats = document.getElementById('seats').children;
+            seats[seatIndex].className = 'seat';
+            seats[seatIndex].innerHTML = `<i class="fas fa-chair"></i>`;
+        });
+
+        function sendMessage() {
+            const message = document.getElementById('message').value;
+            socket.emit('sendMessage', message);
+            document.getElementById('message').value = '';
+        }
+
+        socket.on('newMessage', ({ userId, username, message, profilePic }) => {
+            const chatDiv = document.getElementById('chat');
+            const messageElement = document.createElement('div');
+            messageElement.innerHTML = `
+                <img src="${profilePic || 'https://via.placeholder.com/40'}" alt="${username}" class="profile-pic">
+                <strong>${username}:</strong> ${message}
+            `;
+            chatDiv.appendChild(messageElement);
+            chatDiv.scrollTop = chatDiv.scrollHeight;
+        });
+
+        function leaveRoom() {
+            socket.emit('leaveRoom');
+            document.getElementById('room').style.display = 'none';
+            document.getElementById('lobby').style.display = 'block';
+            updateRooms();
+        }
+
+        socket.on('error', (message) => {
+            alert(message);
+        });
+
+        // تحديث الغرف كل 5 ثوانٍ
+        setInterval(updateRooms, 5000);
+    </script>
+</body>
+</html>
